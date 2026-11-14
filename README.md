@@ -123,7 +123,7 @@ precheck → ensure autostart → reboot → waiting_boot → starting_app → s
 2. **Autostart.** Before the reboot the app is set to autostart via the OS's own mechanism: `systemctl enable`, `launchctl enable` + a `RunAtLoad` check, `StartupType Automatic`, or a scheduled task with an AtStartup trigger.
 3. **Reboot.** The command is sent in the background (`nohup … systemctl reboot`, `shutdown /r /t 5`) so the session closes cleanly.
 4. **Wait for boot.** Polled every `poll_interval_seconds` up to `timeout_seconds`. Success counts only when the boot marker changes: a ping reply does not prove a reboot happened.
-5. **Application check.** Waits `app_start_timeout_seconds` for the normal autostart; if the service does not come up, `app_start_retries` manual start attempts follow. When `app_health_port` is set, readiness is detected by that port opening (Zabbix-style) rather than via WinRM — much faster on freshly booted Windows machines.
+5. **Application check.** Waits `app_start_timeout_seconds` for the normal autostart; if the service does not come up, `app_start_retries` manual start attempts follow. When `app_health_port` is set, readiness is detected by that port opening rather than via WinRM — much faster on freshly booted Windows machines.
 
 Every blocking call (SSH/WinRM) runs in a thread pool via `asyncio.to_thread`, so the web server is never blocked.
 
@@ -158,12 +158,11 @@ Group recommendation: put databases and infrastructure in the first groups with 
 | `timeout_seconds` | how long to wait for the OS to boot |
 | `app_service_name` | systemd unit (`myapp.service`), launchd label, Windows service name, or scheduled task |
 | `app_service_type` | `systemd`, `launchd`, `launchagent`, `windows_service`, `windows_task` (defaults are chosen by OS) |
-| `app_health_port` | optional app port for a Zabbix-style readiness check (e.g. `30020`) |
+| `app_health_port` | optional app port for a readiness check (e.g. `30020`) |
 | `app_process_name` | optional process name to verify the app is running (Windows) |
 | `app_start_timeout_seconds` | how long to wait for the normal autostart |
 | `requires_user_session`, `session_user` | the app needs a user login (Windows/macOS) and who should log in |
 | `login_timeout_seconds` | how long to wait for autologon after the OS boots |
-| `zabbix_host` | the host's technical name in Zabbix (defaults to `hostname`) |
 | `winrm_transport`, `winrm_https`, `winrm_verify_ssl` | WinRM parameters |
 
 Group: `name`, `order` (stage order), `mode` (`sequential` / `parallel`), `on_failure` (`halt` / `continue`), `hosts`.
@@ -187,12 +186,6 @@ ssh-keyscan -H 10.0.10.11 10.0.20.21 10.0.20.22 10.0.30.41 >> ~/.ssh/known_hosts
 1. Verify each host one by one in simulation, then set `"dry_run": false`.
 2. Start with a manual restart of one non-critical machine via its button.
 3. A mass restart in production requires typing `RESTART` in the confirmation dialog.
-
-## Zabbix
-
-In `settings.zabbix` set `enabled: true`, provide `url` (`https://zabbix/api_jsonrpc.php`), and set the token in the `ZABBIX_API_TOKEN` variable (Zabbix 6.0+: Administration → Users → API tokens; read-only rights on the relevant host groups are enough). For each host it shows agent availability, maintenance mode, uptime (`system.uptime`), and up to three active problems.
-
-Independently of Zabbix, the orchestrator polls each host with an ICMP ping and a management-port check (22/5985), so the "online" status is visible even without Zabbix.
 
 ## Machine editor
 
