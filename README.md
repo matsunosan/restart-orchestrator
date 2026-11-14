@@ -1,7 +1,7 @@
 # Restart Orchestrator
 
-A FastAPI web application for remotely restarting a fleet of Linux, macOS and Windows machines in stages, guaranteeing that applications auto-start after boot, with real-time status and Zabbix integration.
-
+A FastAPI web application for remotely restarting a fleet of Linux, macOS and Windows machines in stages, guaranteeing that applications auto-start after boot, with real-time status.
+![Dashboard](docs/02-restart-in-progress.png)
 Follows the flow: **OS config → per-group machine queue → status visualizer → failure handling.**
 
 > This is a personal/portfolio project. It ships with fictional demo data (`config.example.json`) — real addresses, logins and passwords live only in the git-ignored `config.json` / `secrets.json`.
