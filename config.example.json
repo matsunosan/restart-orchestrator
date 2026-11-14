@@ -1,0 +1,130 @@
+{
+  "settings": {
+    "dry_run": true,
+    "dry_run_failure_rate": 0.1,
+    "poll_interval_seconds": 5,
+    "ping_interval_seconds": 10,
+    "command_timeout_seconds": 60,
+    "app_start_retries": 3,
+    "app_retry_delay_seconds": 10,
+    "max_parallel_hosts": 20,
+    "ssh_known_hosts_file": "~/.ssh/known_hosts",
+    "ssh_strict_host_key_checking": true,
+    "alert_webhook_url": null,
+    "log_file": "logs/orchestrator.log",
+    "secrets_file": "secrets.json",
+    "self_detection": true,
+    "exclude_host_ids": [],
+    "zabbix": {
+      "enabled": false,
+      "url": "https://zabbix.example.local/api_jsonrpc.php",
+      "api_token_env": "ZABBIX_API_TOKEN",
+      "poll_interval_seconds": 30,
+      "verify_ssl": true
+    }
+  },
+  "groups": [
+    {
+      "name": "Databases",
+      "order": 1,
+      "mode": "sequential",
+      "on_failure": "halt",
+      "hosts": [
+        {
+          "id": "db-01",
+          "name": "PostgreSQL primary",
+          "hostname": "10.0.10.11",
+          "os": "linux",
+          "user": "restartbot",
+          "credentials": {
+            "ssh_key": "~/.ssh/restartbot_ed25519"
+          },
+          "timeout_seconds": 300,
+          "app_service_name": "postgresql.service",
+          "app_start_timeout_seconds": 90,
+          "zabbix_host": "db-01.example.local"
+        }
+      ]
+    },
+    {
+      "name": "Application servers",
+      "order": 2,
+      "mode": "parallel",
+      "on_failure": "halt",
+      "hosts": [
+        {
+          "id": "app-01",
+          "name": "Backend 1",
+          "hostname": "10.0.20.21",
+          "os": "linux",
+          "user": "restartbot",
+          "credentials": {
+            "ssh_key": "~/.ssh/restartbot_ed25519"
+          },
+          "timeout_seconds": 240,
+          "app_service_name": "myapp.service"
+        },
+        {
+          "id": "app-02",
+          "name": "Backend 2",
+          "hostname": "10.0.20.22",
+          "os": "linux",
+          "user": "restartbot",
+          "credentials": {
+            "ssh_key": "~/.ssh/restartbot_ed25519"
+          },
+          "timeout_seconds": 240,
+          "app_service_name": "myapp.service"
+        }
+      ]
+    },
+    {
+      "name": "Workstations",
+      "order": 3,
+      "mode": "parallel",
+      "on_failure": "continue",
+      "hosts": [
+        {
+          "id": "ws-win-01",
+          "name": "Operator station 1",
+          "hostname": "ws-win-01.example.local",
+          "os": "windows",
+          "user": "EXAMPLE\\svc-restart",
+          "credentials": {},
+          "timeout_seconds": 420,
+          "app_service_name": "MyAgentService",
+          "app_service_type": "windows_service"
+        },
+        {
+          "id": "ws-win-02",
+          "name": "Operator station 2 (kiosk)",
+          "hostname": "ws-win-02.example.local",
+          "os": "windows",
+          "user": "EXAMPLE\\svc-restart",
+          "credentials": {},
+          "timeout_seconds": 420,
+          "app_service_name": "StartKioskApp",
+          "app_service_type": "windows_task",
+          "requires_user_session": true,
+          "session_user": "EXAMPLE\\kiosk",
+          "login_timeout_seconds": 180
+        },
+        {
+          "id": "mac-01",
+          "name": "Editing studio",
+          "hostname": "10.0.30.41",
+          "os": "mac",
+          "user": "restartbot",
+          "credentials": {
+            "ssh_key": "~/.ssh/restartbot_ed25519"
+          },
+          "timeout_seconds": 300,
+          "app_service_name": "com.example.studio-ui",
+          "app_service_type": "launchagent",
+          "requires_user_session": true,
+          "session_user": "editor"
+        }
+      ]
+    }
+  ]
+}

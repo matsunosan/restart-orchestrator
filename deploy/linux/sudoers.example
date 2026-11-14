@@ -1,0 +1,7 @@
+# /etc/sudoers.d/restartbot  (edit via: sudo visudo -f /etc/sudoers.d/restartbot)
+# Only the required commands, passwordless. The unit name in config.json must match (with the .service suffix).
+Cmnd_Alias RESTARTBOT = /usr/bin/systemd-run --on-active=3 --timer-property=AccuracySec=100ms systemctl reboot, \
+                        /usr/bin/systemctl enable myapp.service, \
+                        /usr/bin/systemctl start myapp.service, \
+                        /usr/bin/journalctl -u myapp.service -n 30 --no-pager
+restartbot ALL=(root) NOPASSWD: RESTARTBOT

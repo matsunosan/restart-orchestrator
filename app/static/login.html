@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Log in — Restart Stack</title>
+<style>
+:root {
+  --bg: #e6eaee; --panel: #fafbfc; --ink: #1c2833; --muted: #5e6b78; --line: #c9d1d9;
+  --run: #2563c9; --fail: #c23a2b; --fail-soft: #f8e0dd;
+  --sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141b22; --panel: #1c252e; --ink: #e3e8ed; --muted: #93a1ae; --line: #2f3b47;
+          --run: #6c9cf0; --fail: #f07766; --fail-soft: #43221e; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 var(--sans); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 32px 30px; width: 100%; max-width: 380px; }
+h1 { margin: 0 0 4px; font-size: 22px; font-weight: 650; }
+.sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--ink); font: inherit; }
+input:focus { outline: 2px solid var(--run); outline-offset: 1px; border-color: var(--run); }
+button { width: 100%; margin-top: 22px; padding: 11px; border: none; border-radius: 7px;
+  background: var(--ink); color: var(--panel); font: inherit; font-weight: 600; cursor: pointer; }
+button:hover { opacity: .92; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.err { background: var(--fail-soft); color: var(--fail); padding: 9px 12px; border-radius: 7px;
+  font-size: 13px; margin-top: 16px; display: none; }
+.err.show { display: block; }
+</style>
+</head>
+<body>
+<form class="card" id="form" onsubmit="return false">
+  <h1>Restart Stack</h1>
+  <div class="sub">Sign in to the control panel</div>
+  <label for="user">Username</label>
+  <input id="user" name="user" autocomplete="username" autofocus>
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password">
+  <div class="err" id="err"></div>
+  <button id="btn" type="submit">Log in</button>
+</form>
+<script>
+const $ = (id) => document.getElementById(id);
+function showErr(m) { const e = $("err"); e.textContent = m; e.classList.toggle("show", !!m); }
+
+async function login() {
+  showErr("");
+  const user = $("user").value.trim();
+  const password = $("password").value;
+  if (!user || !password) { showErr("Enter username and password"); return; }
+  $("btn").disabled = true;
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user, password }),
+    });
+    if (r.ok) { location.href = "/"; return; }
+    const j = await r.json().catch(() => ({}));
+    showErr(j.detail || "Wrong username or password");
+  } catch (e) {
+    showErr("Server unavailable: " + e.message);
+  }
+  $("btn").disabled = false;
+}
+$("form").addEventListener("submit", login);
+</script>
+</body>
+</html>

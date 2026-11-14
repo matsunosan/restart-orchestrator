@@ -1,0 +1,16 @@
+# Service for the web application itself on the control server.
+# /etc/systemd/system/restart-orchestrator.service
+[Unit]
+Description=Restart Orchestrator (web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=orchestrator
+WorkingDirectory=/opt/restart-orchestrator
+EnvironmentFile=/etc/restart-orchestrator.env
+ExecStart=/opt/restart-orchestrator/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

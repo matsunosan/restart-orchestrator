@@ -1,0 +1,17 @@
+# /etc/systemd/system/myapp.service — an example service that starts after boot
+# Install: sudo cp myapp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now myapp.service
+[Unit]
+Description=My application
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=myapp
+WorkingDirectory=/opt/myapp
+ExecStart=/opt/myapp/venv/bin/python /opt/myapp/main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

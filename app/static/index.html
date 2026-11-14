@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Restart Stack</title>
+<style>
+:root {
+  --bg: #e6eaee; --panel: #fafbfc; --ink: #1c2833; --muted: #5e6b78; --line: #c9d1d9;
+  --run: #2563c9; --ok: #1f8a55; --fail: #c23a2b; --warn: #b7791f; --skip: #8a94a0;
+  --run-soft: #dfe9fb; --ok-soft: #dcf1e5; --fail-soft: #f8e0dd; --warn-soft: #f6ead3;
+  --sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141b22; --panel: #1c252e; --ink: #e3e8ed; --muted: #93a1ae; --line: #2f3b47;
+    --run: #6c9cf0; --ok: #4cc287; --fail: #f07766; --warn: #e2a945; --skip: #7d8894;
+    --run-soft: #1f2f4a; --ok-soft: #173426; --fail-soft: #43221e; --warn-soft: #3d3020;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); font-variant-numeric: tabular-nums; }
+button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 14px; }
+button:hover:not(:disabled) { border-color: var(--ink); }
+button:disabled { cursor: not-allowed; opacity: .45; }
+button:focus-visible { outline: 2px solid var(--run); outline-offset: 2px; }
+.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; padding: 10px 20px; }
+
+header { padding: 22px 28px 18px; display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; align-items: end; border-bottom: 1px solid var(--line); }
+h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -.01em; }
+.summary { grid-column: 1; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.summary strong { color: var(--ink); font-weight: 600; }
+.actions { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 10px; }
+.mode { font-size: 13px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.mode.dry { background: var(--warn-soft); color: var(--warn); }
+.mode.live { background: var(--fail-soft); color: var(--fail); }
+.conn::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--skip); margin-right: 6px; }
+.conn.on::before { background: var(--ok); }
+.stack-msg.running { color: var(--run); } .stack-msg.success { color: var(--ok); }
+.stack-msg.halted, .stack-msg.error, .stack-msg.partial { color: var(--fail); } .stack-msg.cancelled { color: var(--warn); }
+
+/* Stage pipeline — the central element */
+.pipeline { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(300px, 1fr); gap: 0; padding: 24px 28px 8px; overflow-x: auto; }
+.stage { position: relative; padding: 0 20px 16px 0; }
+.stage-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 3px solid var(--line); position: relative; }
+.stage.current .stage-head { border-bottom-color: var(--run); }
+.stage-num { font-size: 30px; font-weight: 700; line-height: 1; color: var(--muted); }
+.stage.current .stage-num { color: var(--run); }
+.stage-title { font-weight: 600; font-size: 16px; }
+.stage-rules { font-size: 13px; color: var(--muted); }
+.stage-head::after { content: ""; position: absolute; right: -20px; bottom: -3px; width: 20px; height: 3px; background: var(--line); }
+.stage:last-child .stage-head::after { display: none; }
+
+.host { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 4px 8px 8px 4px; padding: 12px 14px; margin-bottom: 12px; }
+.host[data-status="success"] { border-left-color: var(--ok); }
+.host[data-status="failed"] { border-left-color: var(--fail); }
+.host.active { border-left-color: var(--run); }
+.host[data-status="skipped"], .host[data-status="cancelled"] { border-left-color: var(--skip); }
+.host-top { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.host-name { font-weight: 600; }
+.host-addr { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.os { font-size: 12px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.mon { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--muted); margin: 8px 0; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--skip); vertical-align: 1px; }
+.dot.up { background: var(--ok); } .dot.down { background: var(--fail); } .dot.warn { background: var(--warn); }
+.svc { font-size: 13px; color: var(--muted); }
+.svc code { font-family: var(--mono); color: var(--ink); }
+
+.rail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; margin: 10px 0 4px; }
+.rail span { height: 6px; border-radius: 2px; background: var(--line); }
+.rail span.done { background: var(--ok); }
+.rail span.now { background: var(--run); animation: pulse 1.2s ease-in-out infinite; }
+.rail span.bad { background: var(--fail); }
+.rail-labels { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; font-size: 11px; color: var(--muted); }
+@keyframes pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .rail span.now { animation: none; } }
+
+.status-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; }
+.chip { font-size: 13px; font-weight: 600; padding: 2px 9px; border-radius: 4px; white-space: nowrap; }
+.chip.idle, .chip.queued, .chip.skipped, .chip.cancelled { background: var(--bg); color: var(--muted); }
+.chip.active { background: var(--run-soft); color: var(--run); }
+.chip.success { background: var(--ok-soft); color: var(--ok); }
+.chip.failed { background: var(--fail-soft); color: var(--fail); }
+.msg { font-size: 13px; margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }
+.host[data-status="failed"] .msg { color: var(--fail); }
+.prep { margin: 2px 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow: hidden; }
+.prep-head { padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.prep-head:hover { color: var(--ink); }
+.prep-body { padding: 0 14px 12px; font-size: 13px; line-height: 1.55; display: none; }
+.prep.open .prep-body { display: block; }
+.prep-body ol { margin: 4px 0 0; padding-left: 20px; }
+.prep-body li { margin-bottom: 7px; }
+.prep-body code { font-family: var(--mono); background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.prep-body .note { color: var(--muted); margin-top: 8px; font-size: 12.5px; }
+.sel-check { margin-right: 8px; width: 17px; height: 17px; vertical-align: -3px; cursor: pointer; accent-color: var(--run); }
+.host.selected { border-left-color: var(--run); box-shadow: inset 3px 0 0 var(--run); }
+.sel-bar { display: none; align-items: center; gap: 10px; }
+.sel-bar.on { display: flex; }
+.lock-badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-weight: 600; margin-left: 6px; }
+.excluded { font-size: 13px; margin: 8px 0 0; padding: 6px 9px; border-radius: 4px; background: var(--warn-soft); color: var(--warn); }
+.host.is-excluded { border-left-color: var(--warn); }
+.btns { display: flex; gap: 6px; }
+.btns button { padding: 6px 11px; font-size: 14px; }
+.check { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12.5px; }
+.check-head { color: var(--muted); margin-bottom: 3px; }
+.check-row { display: grid; grid-template-columns: 16px 1fr; gap: 4px; overflow-wrap: anywhere; }
+.check-row.ok::before { content: "✓"; color: var(--ok); }
+.check-row.warn::before { content: "!"; color: var(--warn); font-weight: 700; }
+.check-row.error::before { content: "✕"; color: var(--fail); }
+.check-row.error { color: var(--fail); }
+.problems { font-size: 12px; margin: 4px 0 0; padding-left: 16px; color: var(--warn); }
+
+section.log { margin: 8px 28px 28px; }
+section.log h2 { font-size: 16px; margin: 0 0 8px; font-weight: 600; }
+.log-body { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; height: 280px; overflow: auto; padding: 8px 12px; font: 12.5px/1.55 var(--mono); }
+.log-row { display: grid; grid-template-columns: 70px 1fr; gap: 10px; white-space: pre-wrap; }
+.log-row time { color: var(--muted); }
+.log-row.error { color: var(--fail); } .log-row.warning { color: var(--warn); } .log-row.success { color: var(--ok); }
+
+/* Host editor */
+.icon-btn { padding: 4px 9px; font-size: 13px; }
+.danger { color: var(--fail); border-color: var(--fail); }
+.danger:hover:not(:disabled) { background: var(--fail); color: var(--panel); }
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: flex-start; justify-content: center; overflow-y: auto; z-index: 50; padding: 24px 12px; }
+.modal-bg.show { display: flex; }
+.modal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; width: 100%; max-width: 640px; padding: 22px 24px; margin: auto; }
+.modal h2 { margin: 0 0 4px; font-size: 20px; }
+.modal .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+.field { margin-bottom: 13px; }
+.field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.field .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+.field input, .field select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.field input:focus, .field select:focus { outline: 2px solid var(--run); outline-offset: 1px; border-color: var(--run); }
+.field input.invalid { border-color: var(--fail); background: var(--fail-soft); }
+.field .field-err { color: var(--fail); font-size: 12px; margin-top: 3px; display: none; }
+.field.has-error .field-err { display: block; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.check-field { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; }
+.check-field input { width: auto; }
+.section-title { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 20px; }
+.form-error { background: var(--fail-soft); color: var(--fail); padding: 9px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; display: none; }
+.form-error.show { display: block; }
+.hidden { display: none !important; }
+.lockbar { background: var(--warn-soft); border-bottom: 1px solid var(--warn); padding: 10px 28px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lockbar.unlocked { background: var(--ok-soft); border-color: var(--ok); }
+.lockbar .lk-text { color: var(--warn); font-weight: 600; font-size: 14px; }
+.lockbar.unlocked .lk-text { color: var(--ok); }
+.lockbar input { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; min-width: 220px; }
+.lockbar .spacer { flex: 1; }
+.toast { position: fixed; right: 20px; bottom: 20px; max-width: 420px; background: var(--ink); color: var(--panel); padding: 12px 16px; border-radius: 8px; opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
+.toast.show { opacity: 1; transform: none; }
+
+@media (max-width: 720px) {
+  header { grid-template-columns: 1fr; padding: 16px; }
+  .actions { grid-row: auto; grid-column: 1; }
+  .pipeline { grid-auto-flow: row; grid-auto-columns: auto; padding: 16px; }
+  .stage { padding-right: 0; }
+  .stage-head::after { display: none; }
+  section.log { margin: 8px 16px 16px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Restart Stack</h1>
+  <div class="summary">
+    <span id="mode" class="mode"></span>
+    <span id="conn" class="conn">No connection to server</span>
+    <span id="stack-msg" class="stack-msg"></span>
+    <button id="btn-logout" style="margin-left:8px;padding:3px 10px;font-size:13px">Log out</button>
+  </div>
+  <div class="actions">
+    <button id="btn-add-host">+ Add machine</button>
+    <button id="btn-check-all">Check all hosts</button>
+    <button id="btn-cancel" disabled>Stop after current</button>
+    <button id="btn-select">Select machines</button>
+    <span class="sel-bar" id="sel-bar">
+      <span id="sel-count" style="color:var(--muted);font-size:13px"></span>
+      <button id="btn-sel-cancel">Cancel</button>
+      <button id="btn-sel-restart" class="primary">Restart selected</button>
+    </span>
+    <button id="btn-stack" class="primary">Restart entire stack</button>
+  </div>
+</header>
+
+<div class="lockbar" id="lockbar" style="display:none">
+  <span class="lk-text" id="lk-text"></span>
+  <span id="lk-unlock-wrap" style="display:flex;gap:8px;align-items:center">
+    <input type="password" id="lk-input" placeholder="Master password" autocomplete="off">
+    <button class="primary" id="lk-unlock">Unlock</button>
+  </span>
+  <span class="spacer"></span>
+  <button id="lk-lock" style="display:none">Lock now</button>
+</div>
+
+<main>
+  <div class="pipeline" id="pipeline"></div>
+  <section class="log">
+    <h2>Log</h2>
+    <div class="log-body" id="log" aria-live="polite"></div>
+  </section>
+</main>
+<div class="modal-bg" id="modal-bg">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h2 id="modal-title">New machine</h2>
+    <div class="sub">Fill in the fields. Nothing extra can be entered — everything is validated.</div>
+    <div class="form-error" id="form-error"></div>
+    <form id="host-form" onsubmit="return false">
+      <div class="row2">
+        <div class="field"><label>Name</label><input name="name" required placeholder="Media Wall (03)"></div>
+        <div class="field"><label>IP or hostname</label><input name="hostname" required placeholder="10.0.0.23"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>OS</label><select name="os" required><option value="linux">Linux</option><option value="windows">Windows</option><option value="mac">macOS</option></select></div>
+        <div class="field"><label>User</label><input name="user" required placeholder="appuser or DOMAIN\user"></div>
+      </div>
+      <div class="prep" id="prep-panel">
+        <div class="prep-head" id="prep-head"><span id="prep-arrow">▸</span> <span id="prep-title">What to configure on the machine before adding it</span></div>
+        <div class="prep-body" id="prep-body"></div>
+      </div>
+      <div class="field"><label>Group</label><select name="group">
+        <option value="All machines">All machines</option>
+        <option value="Backup machines">Backup machines</option>
+        <option value="Production machines">Production machines</option>
+      </select></div>
+      <div class="field" id="pw-field"><label>Password <span class="hint" id="pw-hint"></span></label><input name="password" type="password" autocomplete="new-password" placeholder="leave empty to keep unchanged"></div>
+      <div class="field hidden" data-os="linux mac" id="sshkey-field"><label>SSH key <span class="hint">path to file, instead of a password</span></label><input name="ssh_key" placeholder="~/.ssh/id_ed25519"></div>
+
+      <div class="section-title" style="border:none;padding-top:8px">Application (optional)</div>
+      <div class="field"><label>What to start after reboot <span class="hint">service, task, or script name</span></label><input name="app_service_name" placeholder="StartApp, webui.service…"></div>
+      <div class="field">
+        <label>How to verify the application is running</label>
+        <select name="_health_mode" id="health-mode">
+          <option value="none">Do not check</option>
+          <option value="port">By network port (more reliable, Zabbix-style)</option>
+          <option value="process">By process name</option>
+        </select>
+      </div>
+      <div class="field hidden" id="health-port-field"><label>Application port</label><input name="app_health_port" type="number" min="1" max="65535" placeholder="30020, 8000…"></div>
+      <div class="field hidden" id="health-proc-field"><label>Process name</label><input name="app_process_name" placeholder="app.exe, firefox…"></div>
+      <div class="check-field"><input type="checkbox" name="requires_user_session" id="rus"><label for="rus" style="margin:0">Windowed app — requires a user login (autologon)</label></div>
+
+      <button type="button" class="icon-btn" id="btn-more" style="margin:6px 0 2px">▸ Advanced</button>
+      <div id="more-fields" class="hidden">
+        <div class="section-title">Advanced</div>
+        <div class="field"><label>Identifier (id) <span class="hint">empty = from name</span></label><input name="id" placeholder="auto"></div>
+        <div class="row2">
+          <div class="field"><label>Boot timeout, sec</label><input name="timeout_seconds" type="number" min="10" max="3600" placeholder="300"></div>
+          <div class="field"><label>App start timeout, sec</label><input name="app_start_timeout_seconds" type="number" min="5" max="3600" placeholder="120"></div>
+        </div>
+        <div class="row2" data-os="linux mac">
+          <div class="field"><label>sudo password <span class="hint">usually the same</span></label><input name="sudo_password" type="password" autocomplete="new-password" placeholder="leave empty to keep unchanged"></div>
+          <div class="field"><label>Login timeout, sec</label><input name="login_timeout_seconds" type="number" min="10" max="3600" placeholder="180"></div>
+        </div>
+        <div class="field"><label>Autologon user <span class="hint">empty = same as "User" above</span></label><input name="session_user" placeholder="auto"></div>
+        <div class="row2" data-os="windows">
+          <div class="field"><label>WinRM transport</label><select name="winrm_transport"><option>ntlm</option><option>kerberos</option><option>basic</option><option>credssp</option></select></div>
+          <div class="field"><label>WinRM HTTPS</label><select name="winrm_https"><option value="false">No (port 5985)</option><option value="true">Yes (port 5986)</option></select></div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="danger" id="btn-delete-host">Delete machine</button>
+        <span style="display:flex;gap:10px">
+          <button type="button" id="btn-cancel-edit">Cancel</button>
+          <button type="button" class="primary" id="btn-save-host">Save</button>
+        </span>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const S = { groups: [], hosts: {}, stack: {}, settings: {} };
+const ACTIVE = new Set(["precheck", "rebooting", "waiting_boot", "starting_app"]);
+const LABEL = {
+  idle: "Idle", queued: "Queued", precheck: "Precheck", rebooting: "Rebooting",
+  waiting_boot: "Booting", starting_app: "Starting app", success: "Success",
+  failed: "Failed", skipped: "Skipped", cancelled: "Cancelled",
+};
+const STEP_OF = { precheck: 0, rebooting: 1, waiting_boot: 2, starting_app: 3 };
+const FAIL_STEP = { precheck: 0, autostart: 0, reboot: 1, boot_timeout: 2, login: 2, app: 3, internal: 0 };
+const OS_NAME = { linux: "Linux", windows: "Windows", mac: "macOS" };
+const $ = (id) => document.getElementById(id);
+function isAdmin() { return S.role === 'admin'; }
+let selectMode = false;
+const selected = new Set();
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m ? `${m} min ${s} s` : `${s} s`;
+}
+function fmtUptime(sec) {
+  if (sec == null) return "";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function rail(rt) {
+  const cells = [0, 1, 2, 3].map(i => {
+    if (rt.status === "success") return "done";
+    if (rt.status === "failed") {
+      const f = FAIL_STEP[rt.failure_stage] ?? 0;
+      return i < f ? "done" : i === f ? "bad" : "";
+    }
+    if (ACTIVE.has(rt.status)) {
+      const n = STEP_OF[rt.status];
+      return i < n ? "done" : i === n ? "now" : "";
+    }
+    return "";
+  });
+  return `<div class="rail">${cells.map(c => `<span class="${c}"></span>`).join("")}</div>
+          <div class="rail-labels"><span>Precheck</span><span>Reboot</span><span>Boot</span><span>App</span></div>`;
+}
+
+function monitorHtml(m) {
+  if (!m || m.online === undefined) return `<div class="mon"><span><i class="dot"></i>Checking availability…</span></div>`;
+  const parts = [];
+  parts.push(`<span><i class="dot ${m.online ? "up" : "down"}"></i>${m.online ? "Online" : "Unreachable"}${m.rtt_ms != null ? ", " + m.rtt_ms + " ms" : ""}</span>`);
+  if (m.icmp === null) parts.push(`<span>ping unavailable on server</span>`);
+  parts.push(`<span><i class="dot ${m.mgmt_port ? "up" : "down"}"></i>Management port</span>`);
+  let problems = "";
+  if (S.settings.zabbix_enabled) {
+    const z = m.zabbix;
+    if (!z) parts.push(`<span><i class="dot"></i>Zabbix: waiting for data</span>`);
+    else if (z.state !== "ok") parts.push(`<span title="${esc(z.error)}"><i class="dot warn"></i>Zabbix: ${z.state === "not_found" ? "host not found" : "API error"}</span>`);
+    else {
+      const cls = z.agent === "up" ? (z.problems.length ? "warn" : "up") : z.agent === "down" ? "down" : "";
+      parts.push(`<span><i class="dot ${cls}"></i>Zabbix: agent ${z.agent === "up" ? "responding" : z.agent === "down" ? "not responding" : "no data"}${z.maintenance ? ", maintenance" : ""}</span>`);
+      if (z.uptime_seconds != null) parts.push(`<span>Uptime ${fmtUptime(z.uptime_seconds)}</span>`);
+      if (z.problems.length) problems = `<ul class="problems">${z.problems.slice(0, 3).map(p => `<li>${esc(p.description)} (${esc(p.severity)})</li>`).join("")}</ul>`;
+    }
+  }
+  return `<div class="mon">${parts.join("")}</div>${problems}`;
+}
+
+function hostLocked(h) {
+  // the machine needs the master password, but the vault is locked
+  return !!h.needs_master && S.vault && S.vault.status === "locked";
+}
+function checkHtml(c) {
+  if (!c) return "";
+  if (c.state === "running") return `<div class="check"><div class="check-head">Access check in progress…</div></div>`;
+  const t = new Date(c.at * 1000).toLocaleTimeString("en-US");
+  return `<div class="check"><div class="check-head">Access check at ${t}: ${c.state === "ok" ? "passed" : "has errors"}</div>
+    ${c.items.map(i => `<div class="check-row ${i.level}"><span>${esc(i.label)}: ${esc(i.detail)}</span></div>`).join("")}</div>`;
+}
+
+function hostHtml(h) {
+  const rt = S.hosts[h.id] || { status: "idle" };
+  const active = ACTIVE.has(rt.status);
+  const checking = rt.last_check && rt.last_check.state === "running";
+  const busy = active || rt.status === "queued" || S.stack.running || !!rt.excluded || checking || hostLocked(h);
+  const chipCls = active ? "active" : rt.status;
+  const svc = h.app_service_name
+    ? `<div class="svc">Application: <code>${esc(h.app_service_name)}</code> (${esc(h.app_service_type)})</div>`
+    : `<div class="svc">No application control</div>`;
+  const session = h.requires_user_session
+    ? `<div class="svc">Requires user login${h.session_user ? ` <code>${esc(h.session_user)}</code>` : ""} (autologon)</div>` : "";
+  return `
+    <div class="host-top">
+      <div><div class="host-name">${selectMode && !rt.excluded ? `<input type="checkbox" class="sel-check" data-sel="${esc(h.id)}" ${selected.has(h.id) ? "checked" : ""}>` : ""}${esc(h.name)}</div><div class="host-addr">${esc(h.hostname)}</div></div>
+      <span>${hostLocked(h) ? '<span class="lock-badge">🔒 master password required</span>' : ""}<span class="os">${OS_NAME[h.os] || esc(h.os)}</span></span>
+    </div>
+    ${monitorHtml(rt.monitor)}
+    ${svc}${session}
+    ${rt.excluded ? `<div class="excluded">Not rebooted: ${esc(rt.excluded)}</div>` : rail(rt)}
+    <div class="status-line">
+      <span class="chip ${chipCls}">${LABEL[rt.status] || rt.status}</span>
+      <span class="btns">
+        ${isAdmin() ? `<button class="icon-btn" data-edit="${esc(h.id)}" ${S.stack.running ? "disabled" : ""} title="Edit">✎</button>` : ""}
+        <button data-check="${esc(h.id)}" ${active || checking || S.stack.running ? "disabled" : ""}>Check</button>
+        <button data-restart="${esc(h.id)}" ${busy ? "disabled" : ""}>Restart</button>
+      </span>
+    </div>
+    ${rt.message ? `<div class="msg">${esc(rt.message)}</div>` : ""}
+    ${checkHtml(rt.last_check)}`;
+}
+
+function renderHost(id) {
+  const el = document.querySelector(`.host[data-id="${CSS.escape(id)}"]`);
+  const h = S.groups.flatMap(g => g.hosts).find(x => x.id === id);
+  if (!el || !h) return;
+  const rt = S.hosts[id] || {};
+  el.dataset.status = rt.status;
+  el.classList.toggle("active", ACTIVE.has(rt.status));
+  el.classList.toggle("is-excluded", !!rt.excluded);
+  el.classList.toggle("selected", selectMode && selected.has(id));
+  el.innerHTML = hostHtml(h);
+}
+
+function renderPipeline() {
+  $("pipeline").innerHTML = S.groups.map(g => `
+    <div class="stage" data-group="${esc(g.name)}">
+      <div class="stage-head">
+        <span class="stage-num">${g.order}</span>
+        <div>
+          <div class="stage-title">${esc(g.name)}</div>
+          <div class="stage-rules">${g.mode === "parallel" ? "All hosts at once" : "Hosts one by one"}, on failure the stack ${g.on_failure === "halt" ? "stops" : "continues"}</div>
+        </div>
+      </div>
+      ${g.hosts.map(h => `<div class="host" data-id="${esc(h.id)}"></div>`).join("")}
+    </div>`).join("");
+  S.groups.flatMap(g => g.hosts).forEach(h => renderHost(h.id));
+  renderStack();
+}
+
+function renderStack() {
+  const st = S.stack;
+  $("mode").textContent = S.settings.dry_run ? "Simulation" : "Live mode";
+  $("mode").className = "mode " + (S.settings.dry_run ? "dry" : "live");
+  const msg = $("stack-msg");
+  let text = st.message || "Stack has not been restarted";
+  if (st.running && st.started_at) text += `, running for ${fmtDur(Date.now() / 1000 - st.started_at)}`;
+  msg.textContent = text;
+  msg.className = "stack-msg " + (st.status || "");
+  $("btn-stack").disabled = !!st.running;
+  $("btn-select").disabled = !!st.running;
+  if (selectMode) updateSelBar();
+  $("btn-cancel").disabled = !st.running || st.cancel_requested;
+  $("btn-check-all").disabled = !!st.running;
+  document.querySelectorAll(".stage").forEach(el => el.classList.toggle("current", st.running && el.dataset.group === st.current_group));
+  S.groups.flatMap(g => g.hosts).forEach(h => {
+    const b = document.querySelector(`[data-restart="${CSS.escape(h.id)}"]`);
+    if (b) { const rt = S.hosts[h.id] || {}; b.disabled = !!st.running || !!rt.excluded || ACTIVE.has(rt.status) || rt.status === "queued" || hostLocked(h); }
+  });
+}
+
+function addLog(e) {
+  const box = $("log");
+  const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  const row = document.createElement("div");
+  row.className = "log-row " + e.level;
+  const t = new Date(e.ts * 1000).toLocaleTimeString("en-US");
+  row.innerHTML = `<time>${t}</time><span>${esc(e.message)}</span>`;
+  box.appendChild(row);
+  while (box.children.length > 500) box.firstChild.remove();
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+let toastTimer;
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 4500);
+}
+
+async function logout() {
+  try { await fetch("/api/logout", { method: "POST", headers: { "X-Requested-With": "restart-ui" } }); } catch {}
+  location.href = "/login";
+}
+document.getElementById("btn-logout")?.addEventListener("click", logout);
+
+async function post(url) {
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "X-Requested-With": "restart-ui" } });
+    if (r.status === 401) { location.href = "/login"; return false; }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); toast(j.detail || `Error ${r.status}`); return false; }
+    return true;
+  } catch (e) { toast("Server unavailable: " + e.message); return false; }
+}
+
+$("btn-stack").addEventListener("click", async () => {
+  const n = S.groups.reduce((a, g) => a + g.hosts.length, 0);
+  const word = S.settings.dry_run ? "" : "RESTART";
+  if (word) {
+    const v = prompt(`All ${n} machines will be rebooted in stages. To confirm, type ${word}`);
+    if (v !== word) return toast("Stack restart cancelled");
+  } else if (!confirm(`Run a simulated restart of ${n} machines?`)) return;
+  if (await post("/api/stack/restart")) toast("Stack restart started");
+});
+$("btn-cancel").addEventListener("click", async () => {
+  if (confirm("Stop the stack? Machines already rebooting will be allowed to finish.")) await post("/api/stack/cancel");
+});
+$("btn-check-all").addEventListener("click", async () => {
+  if (await post("/api/check")) toast("Check of all hosts started. No reboots will happen");
+});
+$("pipeline").addEventListener("click", async (ev) => {
+  const chk = ev.target.closest("[data-check]");
+  if (chk) {
+    chk.disabled = true;
+    if (await post(`/api/hosts/${encodeURIComponent(chk.dataset.check)}/check`)) toast("Check started");
+    return;
+  }
+  const btn = ev.target.closest("[data-restart]");
+  if (!btn) return;
+  const id = btn.dataset.restart;
+  const h = S.groups.flatMap(g => g.hosts).find(x => x.id === id);
+  if (!confirm(`Reboot ${h.name} (${h.hostname})?`)) return;
+  btn.disabled = true;
+  if (await post(`/api/hosts/${encodeURIComponent(id)}/restart`)) toast(`Restart of ${h.name} started`);
+});
+
+// ===== Host editor =====
+let editingId = null;
+
+function formEl() { return document.getElementById("host-form"); }
+function ensureGroupOption(name) {
+  const sel = formEl().group;
+  if (![...sel.options].some(o => o.value === name)) {
+    const o = document.createElement("option"); o.value = name; o.textContent = name; sel.appendChild(o);
+  }
+}
+function showFormError(msg) { const e=$("form-error"); e.textContent=msg; e.classList.toggle("show", !!msg); }
+
+// ===== Checklist: what to configure on the machine before adding it =====
+const PREP = {
+  linux: `
+    <ol>
+      <li><b>SSH key login</b> (so no password is stored). Once, on the control PC:
+        <code>ssh-keygen -t ed25519 -f "$env:USERPROFILE\\.ssh\\restart_orchestrator" -N '""'</code>
+        then copy the public key to the machine:
+        <code>type "$env:USERPROFILE\\.ssh\\restart_orchestrator.pub" | ssh USER@IP "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"</code>
+        In the "SSH key" field below, point to the private key.</li>
+      <li><b>Passwordless sudo</b> for reboot. On the machine:
+        <code>echo 'USER ALL=(root) NOPASSWD: /usr/bin/systemd-run --on-active=3 --timer-property=AccuracySec=100ms systemctl reboot, /usr/bin/systemctl enable *, /usr/bin/systemctl start *' | sudo tee /etc/sudoers.d/restart-orchestrator</code></li>
+      <li><b>Application autostart.</b> If it is a service — <code>systemctl enable name.service</code>.
+        If it is a windowed kiosk browser — set up graphical autologon and an autostart file
+        <code>~/.config/autostart/name.desktop</code> (then tick "Windowed app").</li>
+      <li><b>Application port.</b> Find which port the app listens on (<code>ss -ltnp</code>)
+        and enter it under "how to verify → by port".</li>
+    </ol>
+    <div class="note">SSH and sudo access are required. Autostart and port — only if you want to monitor the application.</div>`,
+  mac: `
+    <ol>
+      <li><b>Enable "Remote Login" (SSH).</b> System Settings → Sharing → Remote Login (on).</li>
+      <li><b>SSH key login</b> (like Linux): create a key on the control PC, place the public one in
+        <code>~/.ssh/authorized_keys</code> on the Mac. Put the private key path in the "SSH key" field.</li>
+      <li><b>Passwordless sudo</b> for reboot. On the Mac:
+        <code>echo 'USER ALL=(root) NOPASSWD: /sbin/shutdown -r now, /bin/launchctl *' | sudo tee /etc/sudoers.d/restart-orchestrator</code></li>
+      <li><b>Application autostart.</b> Background — a LaunchDaemon in <code>/Library/LaunchDaemons/</code> with
+        <code>RunAtLoad=true</code>. Windowed — a LaunchAgent + autologon ("Automatically log in as"),
+        then tick "Windowed app".</li>
+      <li><b>FileVault must be OFF.</b> With FileVault on, after reboot the Mac waits for the
+        disk-unlock password before the network comes up — it cannot be brought up remotely.</li>
+    </ol>
+    <div class="note">App verification — by port (if it listens) or by process.</div>`,
+  windows: `
+    <ol>
+      <li><b>Enable WinRM.</b> On the machine, in an elevated PowerShell:
+        <code>Enable-PSRemoting -Force -SkipNetworkProfileCheck</code>
+        <code>New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force</code></li>
+      <li><b>The account must be an administrator</b> on the machine. Enter the password in the "Password" field below
+        (it is encrypted with the master password).</li>
+      <li><b>Autologon</b> (if the app is windowed). Use the Sysinternals Autologon tool — set the
+        user and password. Tick "Windowed app".</li>
+      <li><b>Start the app on login.</b> A Scheduled Task with an "At log on" trigger
+        (<code>New-ScheduledTaskTrigger -AtLogOn</code>). For batch files, add the working directory
+        <code>cd /d "C:\\path"</code>.</li>
+      <li><b>Application port.</b> Find it (<code>Get-NetTCPConnection -State Listen</code>) and enter it
+        under "how to verify → by port".</li>
+      <li><b>RDP locks the screen</b> for windowed apps. Use VNC, not RDP, to view them.</li>
+    </ol>
+    <div class="note">WinRM and an administrator account are required. Autologon — for windowed apps.</div>`,
+};
+function renderPrep() {
+  const os = formEl().os.value;
+  $("prep-body").innerHTML = PREP[os] || "";
+}
+function togglePrep() {
+  const p = $("prep-panel"); const open = p.classList.toggle("open");
+  $("prep-arrow").textContent = open ? "▾" : "▸";
+}
+$("prep-head").addEventListener("click", togglePrep);
+
+function applyOsVisibility() {
+  const os = formEl().os.value;
+  renderPrep();
+  document.querySelectorAll("#host-form [data-os]").forEach(el => {
+    el.classList.toggle("hidden", !el.dataset.os.split(" ").includes(os));
+  });
+  $("pw-hint").textContent = os==="windows" ? "required for WinRM" : "or SSH key below";
+}
+function applyHealthMode() {
+  const m = $("health-mode").value;
+  $("health-port-field").classList.toggle("hidden", m!=="port");
+  $("health-proc-field").classList.toggle("hidden", m!=="process");
+}
+function applySessionVisibility() { /* autologon fields are now under "Advanced" and are filled automatically */ }
+
+async function openEditor(hostId) {
+  if (!isAdmin()) { toast("Adding and editing machines is for administrators only"); return; }
+  editingId = hostId;
+  const f = formEl();
+  f.reset();
+  showFormError("");
+  // group list in datalist
+  try {
+    const r = await fetch("/api/groups"); const g = await r.json();
+    $("group-list").innerHTML = (g.groups||[]).map(n=>`<option value="${esc(n)}">`).join("");
+  } catch {}
+  if (hostId) {
+    $("modal-title").textContent = "Edit machine";
+    $("btn-delete-host").classList.remove("hidden");
+    try {
+      const r = await fetch(`/api/hosts/${encodeURIComponent(hostId)}/edit`);
+      if (!r.ok) throw new Error();
+      const h = await r.json();
+      f.os.value = h.os; applyOsVisibility();
+      for (const [k,v] of Object.entries(h)) {
+        if (f[k] !== undefined && f[k].type !== "checkbox" && v !== null && v !== undefined && typeof v !== "object") f[k].value = v;
+      }
+      f.id.value = h.id; f.id.readOnly = true;  // id is not editable
+      f.requires_user_session.checked = !!h.requires_user_session;
+      f.winrm_https.value = String(!!h.winrm_https);
+      if (h.group) { ensureGroupOption(h.group); f.group.value = h.group; }
+      // application check mode
+      $("health-mode").value = h.app_health_port ? "port" : (h.app_process_name ? "process" : "none");
+      applyHealthMode();
+      if (h.has_password) f.password.placeholder = "set — leave empty to keep unchanged";
+      if (h.has_sudo_password && f.sudo_password) f.sudo_password.placeholder = "set — leave empty to keep unchanged";
+    } catch { showFormError("Could not load machine data"); }
+  } else {
+    $("modal-title").textContent = "New machine";
+    $("btn-delete-host").classList.add("hidden");
+    f.id.readOnly = false;
+    f.os.value = "linux"; applyOsVisibility();
+    f.group.value = "All machines";
+    $("health-mode").value = "none"; applyHealthMode();
+  }
+  applySessionVisibility();
+  $("modal-bg").classList.add("show");
+}
+function closeEditor() { $("modal-bg").classList.remove("show"); editingId = null; }
+
+function slugify(name) {
+  const translit = {а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ж:"zh",з:"z",и:"i",й:"y",к:"k",л:"l",м:"m",н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"h",ц:"c",ч:"ch",ш:"sh",щ:"sch",ъ:"",ы:"y",ь:"",э:"e",ю:"yu",я:"ya"};
+  return (name||"").toLowerCase().split("").map(c=>translit[c]??c).join("")
+    .replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,48) || ("host-"+Date.now());
+}
+function collectForm() {
+  const f = formEl(); const d = {};
+  const num = new Set(["timeout_seconds","app_start_timeout_seconds","login_timeout_seconds","app_health_port","port"]);
+  const mode = $("health-mode").value;
+  for (const el of f.elements) {
+    if (!el.name || el.name === "_health_mode") continue;
+    if (el.type === "checkbox") { d[el.name] = el.checked; continue; }
+    let v = el.value.trim();
+    if (v === "") continue;
+    if (el.name === "winrm_https") { d[el.name] = v === "true"; continue; }
+    if (num.has(el.name)) { d[el.name] = Number(v); continue; }
+    d[el.name] = v;
+  }
+  d.requires_user_session = f.requires_user_session.checked;
+  // check mode: keep only the relevant field
+  if (mode !== "port") delete d.app_health_port;
+  if (mode !== "process") delete d.app_process_name;
+  // auto id from name when adding
+  if (!editingId && !d.id) d.id = slugify(d.name);
+  // autologon user defaults to the main user
+  if (d.requires_user_session && !d.session_user && d.user) d.session_user = d.user;
+  if (!d.group) d.group = "All machines";  // fallback
+  return d;
+}
+
+// ===== Live form field validation =====
+function isValidHostname(v) {
+  v = (v||"").trim();
+  if (!v) return false;
+  // looks like IPv4 (digits and dots only) -> strict check
+  if (/^[0-9.]+$/.test(v)) {
+    const p = v.split(".");
+    if (p.length !== 4) return false;
+    return p.every(o => /^\d{1,3}$/.test(o) && +o >= 0 && +o <= 255);
+  }
+  // IPv6 — rough
+  if (v.includes(":")) return /^[0-9a-fA-F:]+$/.test(v);
+  // domain name
+  return /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/.test(v);
+}
+function isPort(v) { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 65535; }
+function isPosInt(v, min, max) { const n = Number(v); return Number.isInteger(n) && n >= min && n <= max; }
+
+const FIELD_RULES = {
+  name: { test: v => v.trim().length >= 1 && v.trim().length <= 120, msg: "Enter a name (up to 120 characters)" },
+  hostname: { test: isValidHostname, msg: "Invalid IP or hostname (example: 10.0.0.23)" },
+  user: { test: v => v.trim().length >= 1 && !/\s{2,}/.test(v), msg: "Enter a username" },
+  id: { test: v => v === "" || /^[A-Za-z0-9_.-]+$/.test(v), msg: "Latin letters, digits, _ - . only" },
+  app_health_port: { test: v => v === "" || isPort(v), msg: "Port — a number from 1 to 65535" },
+  timeout_seconds: { test: v => v === "" || isPosInt(v,10,3600), msg: "10–3600 seconds" },
+  app_start_timeout_seconds: { test: v => v === "" || isPosInt(v,5,3600), msg: "5–3600 seconds" },
+  login_timeout_seconds: { test: v => v === "" || isPosInt(v,10,3600), msg: "10–3600 seconds" },
+  session_user: { test: v => v === "" || v.trim().length >= 1, msg: "" },
+};
+
+function fieldWrap(input) { return input.closest(".field"); }
+function setFieldError(input, msg) {
+  const w = fieldWrap(input); if (!w) return;
+  let el = w.querySelector(".field-err");
+  if (!el) { el = document.createElement("div"); el.className = "field-err"; w.appendChild(el); }
+  if (msg) { input.classList.add("invalid"); w.classList.add("has-error"); el.textContent = msg; }
+  else { input.classList.remove("invalid"); w.classList.remove("has-error"); }
+}
+function validateField(input) {
+  const rule = FIELD_RULES[input.name];
+  if (!rule) return true;
+  // skip hidden fields
+  if (input.closest(".hidden") || input.closest("[data-os].hidden")) { setFieldError(input, ""); return true; }
+  const ok = rule.test(input.value);
+  setFieldError(input, ok ? "" : rule.msg);
+  return ok;
+}
+function validateForm() {
+  const f = formEl();
+  let firstBad = null, allOk = true;
+  for (const el of f.elements) {
+    if (!el.name || !FIELD_RULES[el.name]) continue;
+    if (!validateField(el)) { allOk = false; if (!firstBad) firstBad = el; }
+  }
+  // required by OS: password/key
+  const os = f.os.value, pw = f.password.value.trim(), key = (f.ssh_key?.value||"").trim();
+  const editing = !!editingId;
+  const pwField = $("pw-field");
+  const needCred = !editing; // when editing, empty password = keep unchanged
+  if (needCred) {
+    if (os === "windows" && !pw) { setFieldError(f.password, "Windows requires a password"); allOk=false; firstBad=firstBad||f.password; }
+    else if ((os==="linux"||os==="mac") && !pw && !key) { setFieldError(f.password, "Enter a password or SSH key"); allOk=false; firstBad=firstBad||f.password; }
+    else setFieldError(f.password, "");
+  }
+  if (firstBad) firstBad.focus();
+  return allOk;
+}
+
+async function saveHost() {
+  showFormError("");
+  if (!validateForm()) { showFormError("Fix the highlighted fields"); return; }
+  const data = collectForm();
+  const isNew = !editingId;
+  const url = isNew ? "/api/hosts" : `/api/hosts/${encodeURIComponent(editingId)}`;
+  const method = isNew ? "POST" : "PUT";
+  try {
+    const r = await fetch(url, { method, headers: {"X-Requested-With":"restart-ui","Content-Type":"application/json"}, body: JSON.stringify(data) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) { showFormError(j.detail || `Error ${r.status}`); return; }
+    closeEditor(); toast(isNew ? "Machine added" : "Changes saved"); reconnectStream();
+  } catch (e) { showFormError("Server unavailable: " + e.message); }
+}
+
+async function deleteHost() {
+  if (!editingId) return;
+  if (!confirm(`Remove machine ${editingId} from the list? (this does not power the machine off)`)) return;
+  try {
+    const r = await fetch(`/api/hosts/${encodeURIComponent(editingId)}`, { method:"DELETE", headers:{"X-Requested-With":"restart-ui"} });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) { showFormError(j.detail || `Error ${r.status}`); return; }
+    closeEditor(); toast("Machine removed"); reconnectStream();
+  } catch (e) { showFormError("Server unavailable: " + e.message); }
+}
+
+$("btn-add-host").addEventListener("click", () => openEditor(null));
+$("btn-save-host").addEventListener("click", saveHost);
+$("btn-cancel-edit").addEventListener("click", closeEditor);
+$("btn-delete-host").addEventListener("click", deleteHost);
+formEl().os.addEventListener("change", applyOsVisibility);
+formEl().requires_user_session.addEventListener("change", applySessionVisibility);
+$("health-mode").addEventListener("change", applyHealthMode);
+// live validation: on blur and on input
+for (const el of formEl().elements) {
+  if (!el.name) continue;
+  el.addEventListener("blur", () => validateField(el));
+  el.addEventListener("input", () => { if (fieldWrap(el)?.classList.contains("has-error")) validateField(el); });
+}
+$("btn-more").addEventListener("click", () => {
+  const box = $("more-fields"); const open = !box.classList.contains("hidden");
+  box.classList.toggle("hidden", open);
+  $("btn-more").textContent = (open ? "▸" : "▾") + " Advanced";
+});
+$("modal-bg").addEventListener("click", (e) => { if (e.target === $("modal-bg")) closeEditor(); });
+$("pipeline").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-edit]");
+  if (b) openEditor(b.dataset.edit);
+});
+
+let currentES = null;
+function reconnectStream() {
+  if (currentES) { try { currentES.close(); } catch {} }
+  connect();
+}
+// ===== Master password (machine password lock) =====
+function applyRole() {
+  const admin = isAdmin();
+  const addBtn = $("btn-add-host");
+  if (addBtn) addBtn.style.display = admin ? "" : "none";
+}
+function renderVault() {
+  const bar = $("lockbar"); const v = S.vault || {};
+  if (!v.status || v.status === "disabled") { bar.style.display = "none"; return; }
+  bar.style.display = "flex";
+  const locked = v.status === "locked";
+  bar.classList.toggle("unlocked", !locked);
+  $("lk-unlock-wrap").style.display = locked ? "flex" : "none";
+  $("lk-lock").style.display = locked ? "none" : "inline-block";
+  if (locked) {
+    $("lk-text").textContent = "🔒 Password-based machines (Windows) are locked — enter the master password. SSH-key machines keep working.";
+  } else {
+    const mins = v.seconds_left != null ? Math.ceil(v.seconds_left/60) : null;
+    $("lk-text").textContent = "🔓 Unlocked" + (mins != null ? ` (auto-lock in ~${mins} min)` : "");
+  }
+}
+async function refreshVault() {
+  try {
+    const r = await fetch("/api/vault"); if (!r.ok) return;
+    const prev = S.vault && S.vault.status;
+    S.vault = await r.json(); renderVault();
+    if (prev !== S.vault.status) renderPipeline();  // redraw cards (locks, buttons)
+  } catch {}
+}
+async function unlockVault() {
+  const pw = $("lk-input").value;
+  if (!pw) return;
+  try {
+    const r = await fetch("/api/vault/unlock", { method:"POST", headers:{"X-Requested-With":"restart-ui","Content-Type":"application/json"}, body: JSON.stringify({master_password: pw}) });
+    if (r.ok) { $("lk-input").value = ""; toast("Unlocked"); await refreshVault(); renderPipeline(); }
+    else { const j = await r.json().catch(()=>({})); toast(j.detail || "Wrong master password"); }
+  } catch (e) { toast("Server unavailable"); }
+}
+async function lockVault() {
+  try {
+    await fetch("/api/vault/lock", { method:"POST", headers:{"X-Requested-With":"restart-ui"} });
+    toast("Locked"); await refreshVault(); renderPipeline();
+  } catch {}
+}
+$("lk-unlock").addEventListener("click", unlockVault);
+$("lk-input").addEventListener("keydown", e => { if (e.key === "Enter") unlockVault(); });
+$("lk-lock").addEventListener("click", lockVault);
+setInterval(refreshVault, 30000);  // poll status (the timer may have expired)
+
+// ===== Selecting machines to restart =====
+function updateSelBar() {
+  $("sel-count").textContent = selected.size ? `selected: ${selected.size}` : "nothing selected";
+  $("btn-sel-restart").disabled = selected.size === 0 || !!S.stack.running;
+}
+function enterSelect() {
+  selectMode = true; selected.clear();
+  $("sel-bar").classList.add("on");
+  $("btn-select").style.display = "none";
+  $("btn-stack").style.display = "none";
+  renderPipeline(); updateSelBar();
+}
+function exitSelect() {
+  selectMode = false; selected.clear();
+  $("sel-bar").classList.remove("on");
+  $("btn-select").style.display = "";
+  $("btn-stack").style.display = "";
+  renderPipeline();
+}
+$("btn-select").addEventListener("click", enterSelect);
+$("btn-sel-cancel").addEventListener("click", exitSelect);
+$("pipeline").addEventListener("change", (e) => {
+  const cb = e.target.closest("[data-sel]");
+  if (!cb) return;
+  if (cb.checked) selected.add(cb.dataset.sel); else selected.delete(cb.dataset.sel);
+  renderHost(cb.dataset.sel); updateSelBar();
+});
+$("btn-sel-restart").addEventListener("click", async () => {
+  if (!selected.size) return;
+  const ids = [...selected];
+  const names = S.groups.flatMap(g => g.hosts).filter(h => selected.has(h.id)).map(h => h.name);
+  const word = S.settings.dry_run ? "" : "RESTART";
+  if (word) {
+    const v = prompt(`The selected machines (${ids.length}) will be rebooted:\n${names.join(", ")}\n\nTo confirm, type ${word}`);
+    if (v !== word) return toast("Restart cancelled");
+  } else if (!confirm(`Restart the selected (${ids.length})?`)) return;
+  try {
+    const r = await fetch("/api/stack/restart", { method:"POST", headers:{"X-Requested-With":"restart-ui","Content-Type":"application/json"}, body: JSON.stringify({host_ids: ids}) });
+    if (r.status === 401) { location.href = "/login"; return; }
+    if (!r.ok) { const j = await r.json().catch(()=>({})); toast(j.detail || `Error ${r.status}`); return; }
+    toast(`Restart of selected (${ids.length}) started`); exitSelect();
+  } catch (e) { toast("Server unavailable: " + e.message); }
+});
+
+function connect() {
+  const es = new EventSource("/api/stream");
+  currentES = es;
+  es.addEventListener("snapshot", (e) => {
+    const d = JSON.parse(e.data);
+    Object.assign(S, { groups: d.groups, hosts: d.hosts, stack: d.stack, settings: d.settings, vault: d.vault, role: d.role });
+    $("log").innerHTML = ""; d.events.forEach(addLog);
+    renderPipeline();
+    renderVault();
+    applyRole();
+    $("conn").classList.add("on"); $("conn").textContent = "Connected";
+  });
+  es.addEventListener("host", (e) => { const h = JSON.parse(e.data); S.hosts[h.id] = h; renderHost(h.id); });
+  es.addEventListener("stack", (e) => { S.stack = JSON.parse(e.data); renderStack(); });
+  es.addEventListener("event", (e) => addLog(JSON.parse(e.data)));
+  es.onerror = () => { $("conn").classList.remove("on"); $("conn").textContent = "No connection to server, reconnecting…"; };
+}
+connect();
+
+// Update the overall stack timer
+setInterval(() => { if (S.stack.running) renderStack(); }, 1000);
+</script>
+</body>
+</html>

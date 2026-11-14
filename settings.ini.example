@@ -1,0 +1,18 @@
+[server]
+host = 0.0.0.0
+port = 8443
+config = config.json
+
+[auth]
+; ADMIN — can do everything, including editing machines
+admin_user = admin
+admin_password = CHANGE_ME_ADMIN
+; SE (engineer) — view/restart, no editing
+se_user = SE
+se_password = CHANGE_ME_SE
+auth_disabled = 0
+
+[https]
+enabled = 1
+certfile = certs/server.crt
+keyfile = certs/server.key

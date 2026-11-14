@@ -1,0 +1,7 @@
+# /etc/sudoers.d/restartbot on macOS (sudo visudo -f /etc/sudoers.d/restartbot)
+Cmnd_Alias RESTARTBOT = /sbin/shutdown -r now, \
+                        /bin/launchctl enable system/com.example.myapp, \
+                        /bin/launchctl print system/com.example.myapp, \
+                        /bin/launchctl kickstart system/com.example.myapp, \
+                        /bin/launchctl bootstrap system /Library/LaunchDaemons/com.example.myapp.plist
+restartbot ALL=(root) NOPASSWD: RESTARTBOT

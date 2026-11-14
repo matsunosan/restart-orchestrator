@@ -1,0 +1,40 @@
+# Secrets and local configuration (real IPs, logins) — never commit
+.env
+*.env
+!.env.example
+config.json
+config.*.json
+!config.example.json
+secrets*.json
+!secrets.example.json
+*.pem
+*.key
+id_*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Runtime
+logs/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# TLS certificates
+certs/
+*.key
+*.crt
+
+# build and local settings
+dist/
+build/
+settings.ini
